@@ -1,0 +1,615 @@
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local CoreGui = game:GetService("CoreGui")
+local TweenService = game:GetService("TweenService")
+local GuiService = game:GetService("GuiService")
+local StarterGui = game:GetService("StarterGui")
+local PromptService = game:GetService("ProximityPromptService")
+local Workspace = game:GetService("Workspace")
+
+local localPlayer = Players.LocalPlayer
+local Camera = Workspace.CurrentCamera
+
+local genv = (typeof(getgenv) == "function" and getgenv()) or _G
+local hui = CoreGui
+pcall(function()
+    if typeof(gethui) == "function" then
+        local ok, r = pcall(gethui)
+        if ok and typeof(r) == "Instance" then hui = r end
+    end
+end)
+
+if type(genv.__SXZHubCleanup) == "function" then
+    pcall(genv.__SXZHubCleanup)
+end
+
+local interfaceState = {
+    Enabled = false,
+    Busy = false,
+    BusySince = 0,
+    BusyLimit = 2.5,
+    ReleaseAt = 0.8,
+}
+
+local COL = {
+    Card = Color3.fromRGB(15, 15, 19),
+    CardTop = Color3.fromRGB(24, 22, 28),
+    Stroke = Color3.fromRGB(48, 46, 56),
+    Text = Color3.fromRGB(240, 238, 244),
+
+    AccentA = Color3.fromRGB(0, 191, 255),
+    AccentB = Color3.fromRGB(0, 0, 139),
+
+    Good = Color3.fromRGB(80, 220, 140),
+    Work = Color3.fromRGB(255, 190, 70),
+    Bad = Color3.fromRGB(240, 90, 90),
+    Off = Color3.fromRGB(58, 56, 66),
+}
+
+local function randName()
+    local t = {}
+    for i = 1, math.random(10, 16) do
+        t[i] = string.char(math.random(97, 122))
+    end
+    return table.concat(t)
+end
+
+local function newInst(class, parent, props)
+    local inst = Instance.new(class)
+    inst.Name = randName()
+    if props then
+        for k, v in pairs(props) do inst[k] = v end
+    end
+    inst.Parent = parent
+    return inst
+end
+
+local function tween(obj, dur, props, style)
+    local ok, tw = pcall(TweenService.Create, TweenService, obj,
+        TweenInfo.new(dur, style or Enum.EasingStyle.Quint, Enum.EasingDirection.Out), props)
+    if ok and tw then tw:Play() end
+end
+
+local connections = {}
+local function guardConn(c)
+    connections[#connections + 1] = c
+    return c
+end
+
+local TeleportPositions = {
+    CFrame.new(4747.71, 70.57, -335.25),
+    CFrame.new(3520.94, 70.73, -343.74),
+    CFrame.new(2446.02, 70.88, -351.18),
+    CFrame.new(1352.11, 71.02, -358.75),
+    CFrame.new(544.49, 71.13, -364.34),
+}
+
+local PromptConnection = nil
+local SavedHoldDurations = {}
+local ActiveConnections = {}
+local AntiHitRunning = false
+
+local function TriggerAntiHit()
+    if AntiHitRunning then return end
+    AntiHitRunning = true
+
+    local Character = localPlayer.Character
+    if not Character then
+        AntiHitRunning = false
+        return
+    end
+
+    local Humanoid = Character:FindFirstChildOfClass("Humanoid")
+    local RootPart = Character:FindFirstChild("HumanoidRootPart")
+
+    if not Humanoid or not RootPart then
+        AntiHitRunning = false
+        return
+    end
+
+    local OriginalCameraCFrame = Camera.CFrame
+    local OriginalCameraType = Camera.CameraType
+
+    Camera.CameraType = Enum.CameraType.Scriptable
+    Camera.CFrame = OriginalCameraCFrame
+
+    Humanoid.BreakJointsOnDeath = false
+
+    for _, Descendant in ipairs(Character:GetDescendants()) do
+        if Descendant:IsA("Motor6D") then
+            Descendant.Enabled = true
+        end
+    end
+
+    local HeartbeatConnection
+
+    RootPart.AssemblyLinearVelocity = Vector3.zero
+    RootPart.AssemblyAngularVelocity = Vector3.zero
+
+    for _, TargetCFrame in ipairs(TeleportPositions) do
+        if not interfaceState.Enabled then break end
+
+        Humanoid.PlatformStand = true
+        Humanoid.Health = 100
+
+        RootPart.CFrame = TargetCFrame
+        RootPart.AssemblyLinearVelocity = Vector3.zero
+        RootPart.AssemblyAngularVelocity = Vector3.zero
+
+        Camera.CFrame = OriginalCameraCFrame
+
+        task.wait(0.02)
+    end
+
+    if interfaceState.Enabled then
+        local StartTime = os.clock()
+
+        HeartbeatConnection = RunService.Heartbeat:Connect(function()
+            if not interfaceState.Enabled or not RootPart.Parent or not Humanoid.Parent then
+                if HeartbeatConnection then HeartbeatConnection:Disconnect() end
+                return
+            end
+
+            if os.clock() - StartTime > 0.35 then
+                if HeartbeatConnection then HeartbeatConnection:Disconnect() end
+                return
+            end
+
+            Humanoid.Health = 100
+            Humanoid.PlatformStand = true
+
+            RootPart.CFrame = TeleportPositions[#TeleportPositions]
+            RootPart.AssemblyLinearVelocity = Vector3.zero
+            RootPart.AssemblyAngularVelocity = Vector3.zero
+
+            Camera.CFrame = OriginalCameraCFrame
+        end)
+
+        task.wait(0.35)
+    end
+
+    if HeartbeatConnection then HeartbeatConnection:Disconnect() end
+
+    if Humanoid and Humanoid.Parent then
+        Humanoid.PlatformStand = false
+    end
+
+    if Camera then
+        Camera.CameraType = OriginalCameraType
+    end
+
+    AntiHitRunning = false
+end
+
+local function PatchPrompt(Prompt)
+    if not (Prompt and typeof(Prompt) == "Instance" and Prompt:IsA("ProximityPrompt")) then return end
+
+    if interfaceState.Enabled then
+        if SavedHoldDurations[Prompt] == nil then
+            SavedHoldDurations[Prompt] = Prompt.HoldDuration
+        end
+        Prompt.HoldDuration = 0
+        Prompt.RequiresLineOfSight = false
+    elseif SavedHoldDurations[Prompt] ~= nil then
+        Prompt.HoldDuration = SavedHoldDurations[Prompt]
+        SavedHoldDurations[Prompt] = nil
+    end
+end
+
+local function SetPromptPatch(Enabled)
+    if Enabled then
+        for _, Item in ipairs(Workspace:GetDescendants()) do
+            PatchPrompt(Item)
+        end
+
+        table.insert(ActiveConnections, Workspace.DescendantAdded:Connect(function(Item)
+            PatchPrompt(Item)
+        end))
+
+        table.insert(ActiveConnections, PromptService.PromptShown:Connect(function(Prompt)
+            PatchPrompt(Prompt)
+        end))
+    else
+        for _, Connection in ipairs(ActiveConnections) do
+            if Connection then Connection:Disconnect() end
+        end
+        ActiveConnections = {}
+
+        for Prompt, Duration in pairs(SavedHoldDurations) do
+            if Prompt and Prompt.Parent then
+                Prompt.HoldDuration = Duration
+            end
+        end
+        SavedHoldDurations = {}
+    end
+end
+
+local function UpdateAntiHitState(Enabled)
+    SetPromptPatch(Enabled)
+    if Enabled then
+        if not PromptConnection then
+            PromptConnection = PromptService.PromptTriggered:Connect(function(FiredPrompt, FiredPlayer)
+                if FiredPlayer == localPlayer then
+                    TriggerAntiHit()
+                end
+            end)
+        end
+    else
+        if PromptConnection then
+            PromptConnection:Disconnect()
+            PromptConnection = nil
+        end
+    end
+end
+
+local ScreenGui = newInst("ScreenGui", nil, {
+    ResetOnSpawn = false,
+    IgnoreGuiInset = true,
+    DisplayOrder = -100,
+    ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
+})
+
+-- ===== UI AUMENTADA (+10% em cima da versÃ£o anterior) =====
+local UI_W = 315      -- antes: 285
+local UI_H = 74       -- antes: 66
+local PAD = 15        -- antes: 13
+local ICON = 52       -- antes: 46
+local TOGGLE_W = 60   -- antes: 54
+local TOGGLE_H = 32   -- antes: 28
+local KNOB = 24       -- antes: 20
+
+local Frame = newInst("Frame", ScreenGui, {
+    AnchorPoint = Vector2.new(0.5, 0.5),
+    Position = UDim2.new(0.5, 0, 0.5, 0),
+    Size = UDim2.fromOffset(UI_W, UI_H),
+    BackgroundTransparency = 1,
+})
+
+local UIScale2 = newInst("UIScale", Frame, { Scale = 1 })
+
+local Frame2 = newInst("Frame", Frame, {
+    Size = UDim2.fromScale(1, 1),
+    BackgroundColor3 = COL.Card,
+    BorderSizePixel = 0,
+    Active = true,
+})
+
+newInst("UICorner", Frame2, { CornerRadius = UDim.new(0, 18) })
+local UIScale = newInst("UIScale", Frame2, { Scale = 0.86 })
+newInst("UIGradient", Frame2, { Color = ColorSequence.new(COL.CardTop, COL.Card), Rotation = 90 })
+
+local UIStroke = newInst("UIStroke", Frame2, {
+    Thickness = 1.5,
+    Color = Color3.fromRGB(255, 255, 255),
+    Transparency = 0.2,
+    ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
+})
+
+local UIGradient = newInst("UIGradient", UIStroke, { Color = ColorSequence.new(COL.Stroke, COL.Stroke) })
+
+-- ===== EspaÃ§o vazio no lugar do Ãcone (sem imagem) =====
+local Frame3 = newInst("Frame", Frame2, {
+    AnchorPoint = Vector2.new(0, 0.5),
+    Position = UDim2.new(0, PAD, 0.5, 0),
+    Size = UDim2.fromOffset(ICON, ICON),
+    BackgroundColor3 = Color3.fromRGB(28, 26, 32),
+    BorderSizePixel = 0,
+    ZIndex = 2,
+})
+
+newInst("UICorner", Frame3, { CornerRadius = UDim.new(0, 15) })
+local UIStroke2 = newInst("UIStroke", Frame3, { Thickness = 1.5, Color = COL.Off, ApplyStrokeMode = Enum.ApplyStrokeMode.Border })
+
+-- (ImageLabel removido)
+
+local titleX = PAD + ICON + 13
+
+newInst("UIGradient", newInst("TextLabel", Frame2, {
+    BackgroundTransparency = 1,
+    Position = UDim2.new(0, titleX, 0, 10),
+    Size = UDim2.new(1, -(titleX + TOGGLE_W + 26), 0, 19),
+    Font = Enum.Font.BuilderSansExtraBold,
+    TextSize = 19,
+    TextXAlignment = Enum.TextXAlignment.Left,
+    TextColor3 = Color3.fromRGB(255, 255, 255),
+    Text = "Fhuxo Hub",
+    ZIndex = 2,
+}), { Color = ColorSequence.new(COL.AccentA, COL.AccentB) })
+
+newInst("TextLabel", Frame2, {
+    BackgroundTransparency = 1,
+    Position = UDim2.new(0, titleX, 0, 32),
+    Size = UDim2.new(1, -(titleX + TOGGLE_W + 26), 0, 26),
+    Font = Enum.Font.GothamBlack,
+    TextSize = 21,
+    TextXAlignment = Enum.TextXAlignment.Left,
+    TextColor3 = COL.Text,
+    Text = "Ant Hit",
+    ZIndex = 2,
+})
+
+local TextButton = newInst("TextButton", Frame2, {
+    AnchorPoint = Vector2.new(1, 0.5),
+    Position = UDim2.new(1, -PAD - 2, 0.5, 0),
+    Size = UDim2.fromOffset(TOGGLE_W, TOGGLE_H),
+    BackgroundColor3 = Color3.fromRGB(255, 255, 255),
+    AutoButtonColor = false,
+    BorderSizePixel = 0,
+    Text = "",
+    ZIndex = 2,
+})
+
+newInst("UICorner", TextButton, { CornerRadius = UDim.new(1, 0) })
+local UIGradient2 = newInst("UIGradient", TextButton, { Color = ColorSequence.new(COL.Off, COL.Off) })
+
+local Frame4 = newInst("Frame", TextButton, {
+    AnchorPoint = Vector2.new(0, 0.5),
+    Position = UDim2.new(0, 4, 0.5, 0),
+    Size = UDim2.fromOffset(KNOB, KNOB),
+    BackgroundColor3 = Color3.fromRGB(245, 245, 250),
+    BorderSizePixel = 0,
+    ZIndex = 3,
+})
+
+newInst("UICorner", Frame4, { CornerRadius = UDim.new(1, 0) })
+
+local state = { Active = false, FlashRequest = nil, FlashUntil = 0 }
+
+local function accentColor()
+    return interfaceState.Enabled and COL.AccentA or COL.Off
+end
+
+local function render(instant)
+    local duration = instant and 0 or 0.28
+
+    if interfaceState.Enabled then
+        UIGradient2.Color = ColorSequence.new(COL.AccentA, COL.AccentB)
+        UIGradient.Color = ColorSequence.new({
+            ColorSequenceKeypoint.new(0, COL.Stroke),
+            ColorSequenceKeypoint.new(0.45, COL.AccentA),
+            ColorSequenceKeypoint.new(0.55, COL.AccentB),
+            ColorSequenceKeypoint.new(1, COL.Stroke),
+        })
+        tween(Frame4, duration, { Position = UDim2.new(1, -(KNOB + 4), 0.5, 0) }, Enum.EasingStyle.Back)
+        tween(UIStroke, 0.3, { Transparency = 0 })
+    else
+        UIGradient2.Color = ColorSequence.new(COL.Off, COL.Off)
+        UIGradient.Color = ColorSequence.new(COL.Stroke, COL.Stroke)
+        tween(Frame4, duration, { Position = UDim2.new(0, 4, 0.5, 0) }, Enum.EasingStyle.Back)
+        tween(UIStroke, 0.3, { Transparency = 0.2 })
+    end
+
+    if state.FlashUntil <= os.clock() then
+        tween(UIStroke2, duration, { Color = accentColor() })
+    end
+end
+
+local function processFlash()
+    local req = state.FlashRequest
+    if not req then return end
+    state.FlashRequest = nil
+    state.FlashUntil = os.clock() + (req.Hold or 0)
+    tween(UIStroke2, 0.2, { Color = req.Color })
+
+    if req.Hold then
+        task.delay(req.Hold, function()
+            if os.clock() >= state.FlashUntil then
+                tween(UIStroke2, 0.3, { Color = accentColor() })
+            end
+        end)
+    end
+end
+
+local clickBtn = newInst("TextButton", Frame2, {
+    Size = UDim2.fromScale(1, 1),
+    BackgroundTransparency = 1,
+    AutoButtonColor = false,
+    Text = "",
+    ZIndex = 10,
+})
+
+local isDragging = false
+local dragInputObject = nil
+local startInputPos = nil
+local startFramePos = nil
+local userMoved = false
+
+guardConn(clickBtn.InputBegan:Connect(function(input)
+    if (input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch) and not isDragging then
+        isDragging = true
+        dragInputObject = input
+        userMoved = false
+        startInputPos = Vector2.new(input.Position.X, input.Position.Y)
+        startFramePos = Frame.Position
+    end
+end))
+
+guardConn(UserInputService.InputChanged:Connect(function(input)
+    if not isDragging then return end
+    if input == dragInputObject then
+        local currentPos = Vector2.new(input.Position.X, input.Position.Y)
+        local delta = currentPos - startInputPos
+        
+        if math.abs(delta.X) > 4 or math.abs(delta.Y) > 4 then
+            userMoved = true
+        end
+
+        Frame.Position = UDim2.new(
+            startFramePos.X.Scale, startFramePos.X.Offset + delta.X,
+            startFramePos.Y.Scale, startFramePos.Y.Offset + delta.Y
+        )
+    end
+end))
+
+guardConn(UserInputService.InputEnded:Connect(function(input)
+    if isDragging and input == dragInputObject then
+        isDragging = false
+        dragInputObject = nil
+        
+        if not userMoved then
+            interfaceState.Enabled = not interfaceState.Enabled
+            render(false)
+            UpdateAntiHitState(interfaceState.Enabled)
+        end
+        startInputPos = nil
+        startFramePos = nil
+    end
+end))
+
+guardConn(clickBtn.MouseEnter:Connect(function()
+    tween(TextButton, 0.15, { Size = UDim2.fromOffset(TOGGLE_W + 4, TOGGLE_H + 2) })
+end))
+guardConn(clickBtn.MouseLeave:Connect(function()
+    tween(TextButton, 0.15, { Size = UDim2.fromOffset(TOGGLE_W, TOGGLE_H) })
+end))
+
+local baseHeight = UI_H
+local lastOffsetY = nil
+local rotationAngle = 0
+local manualPositionSet = false
+
+local function isShown(element)
+    while element do
+        if element:IsA("GuiObject") and not element.Visible then return false end
+        if element:IsA("LayerCollector") then return element.Enabled end
+        element = element.Parent
+    end
+    return false
+end
+
+local function getGuiInsetY()
+    local ok, r = pcall(function() return GuiService:GetGuiInset().Y end)
+    return ok and r or 0
+end
+
+local function findTopButtonY(inst)
+    local best = nil
+    for _, d in ipairs(inst:GetDescendants()) do
+        if d:IsA("GuiButton") and d.Visible and d.AbsoluteSize.Y > 8 and d.AbsoluteSize.X > 8 then
+            local y = d.AbsolutePosition.Y
+            if not best or y < best then best = y end
+        end
+    end
+    return best or inst.AbsolutePosition.Y
+end
+
+local topContainerNames = {
+    Hotbar = true, HotBar = true, Toolbar = true, ToolBar = true,
+    Backpack = true, Inventory = true,
+}
+
+local topContainers = {}
+local function scanTopContainers()
+    table.clear(topContainers)
+    local playerGui = localPlayer:FindFirstChildOfClass("PlayerGui")
+    if not playerGui then return end
+    for _, d in ipairs(playerGui:GetDescendants()) do
+        if d:IsA("GuiObject") and topContainerNames[d.Name] then
+            topContainers[#topContainers + 1] = d
+        end
+    end
+end
+
+local function getAllBars()
+    local elements = {}
+    pcall(function()
+        if not StarterGui:GetCoreGuiEnabled(Enum.CoreGuiType.Backpack) then return end
+        for _, c in ipairs(CoreGui.RobloxGui.Backpack:GetChildren()) do
+            if c:IsA("GuiObject") then elements[#elements + 1] = c end
+        end
+    end)
+    for _, v in ipairs(topContainers) do
+        if v.Parent then elements[#elements + 1] = v end
+    end
+    return elements
+end
+
+local function autoReposition()
+    if isDragging or userMoved then
+        manualPositionSet = true
+        return
+    end
+    if manualPositionSet then return end
+
+    local camera = workspace.CurrentCamera
+    if not camera then return end
+    local viewport = camera.ViewportSize
+    if viewport.X < 10 or viewport.Y < 10 then return end
+
+    local isTouch = UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled
+    local scaleFactor = math.min(viewport.X / 1280, viewport.Y / 720)
+    local scale = isTouch and math.clamp(scaleFactor * 1.05, 0.6, 0.8) * 0.97 or math.clamp(scaleFactor, 0.8, 1.1)
+    UIScale2.Scale = scale
+
+    local backgroundTransparency = isTouch and 0.3 or 0
+    if Frame2.BackgroundTransparency ~= backgroundTransparency then
+        Frame2.BackgroundTransparency = backgroundTransparency
+        Frame3.BackgroundTransparency = backgroundTransparency
+    end
+
+    local baseY = viewport.Y - 8 * scale
+    local found = false
+
+    for _, bar in ipairs(getAllBars()) do
+        if isShown(bar) then
+            local size = bar.AbsoluteSize
+            local yPos = bar.AbsolutePosition.Y
+            if size.X > 20 and size.Y > 20 and size.Y < viewport.Y * 0.4 and yPos + size.Y / 2 > viewport.Y * 0.5 then
+                local topY = findTopButtonY(bar)
+                found = true
+                baseY = math.min(baseY, topY + getGuiInsetY())
+            end
+        end
+    end
+
+    if found then
+        lastOffsetY = viewport.Y - baseY
+    elseif lastOffsetY then
+        baseY = viewport.Y - lastOffsetY
+    end
+
+    local finalY = math.max(baseY - (isTouch and 4 or 6) * scale - baseHeight * scale / 2, baseHeight * scale / 2 + 8)
+    Frame.Position = UDim2.new(0.5, 0, 0, finalY)
+end
+
+local timeAcc1, timeAcc2 = 0, 0
+guardConn(RunService.RenderStepped:Connect(function(dt)
+    processFlash()
+    timeAcc1 += dt
+    timeAcc2 += dt
+
+    if timeAcc1 >= 3 then
+        timeAcc1 = 0
+        pcall(scanTopContainers)
+    end
+    if timeAcc2 >= 0.2 then
+        timeAcc2 = 0
+        pcall(autoReposition)
+    end
+
+    if interfaceState.Enabled then
+        rotationAngle = (rotationAngle + dt * (state.Active and 360 or 90)) % 360
+        UIGradient.Rotation = rotationAngle
+    end
+end))
+
+ScreenGui.Parent = hui
+render(true)
+pcall(function()
+    tween(UIScale, 0.45, { Scale = 1 }, Enum.EasingStyle.Back)
+end)
+
+genv.__SXZHubCleanup = function()
+    for _, conn in ipairs(connections) do
+        pcall(function() conn:Disconnect() end)
+    end
+    table.clear(connections)
+    pcall(function() ScreenGui:Destroy() end)
+    SetPromptPatch(false)
+    if PromptConnection then
+        PromptConnection:Disconnect()
+        PromptConnection = nil
+    end
+    genv.__SXZHubCleanup = nil
+end
